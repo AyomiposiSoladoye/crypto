@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.env
+# Telegram session files are a full login to your account - never commit them
+secrets/
+*.session
+*.session-journal
+# Scraped data stays local
+data/
