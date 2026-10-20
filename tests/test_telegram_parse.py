@@ -118,3 +118,20 @@ def test_old_database_gets_new_columns(tmp_path):
     conn = store.connect(path)
     cols = {r[1] for r in conn.execute("PRAGMA table_info(messages)")}
     assert {"fwd_channel_id", "fwd_channel_post"} <= cols
+
+
+def test_member_text_redacted():
+    msg = make_msg(message="DM @quidax_helper or call 08012345678, send to "
+                           "0x52908400098527886E0F7030069857D2E4169EE7 / me@mail.com acct 0123456789. "
+                           "BTC hit 100000 today, 2 hours ago")
+    t = message_to_record(msg, "grp", keep_text=False, member_text="redact")["message_text"]
+    assert "08012345678" not in t and "0x5290" not in t and "me@mail.com" not in t
+    assert "@quidax_helper" not in t and "0123456789" not in t
+    assert "<WALLET>" in t and "<EMAIL>" in t and "<USER>" in t
+    assert "100000" in t and "2 hours" in t   # ordinary numbers survive
+
+
+def test_redaction_leaves_prices_and_links_alone():
+    text = "Price: 0.000006277 ETH, see https://x.com/quidaxglobal/status/1834567890123456789?s=46"
+    assert message_to_record(make_msg(message=text), "grp", keep_text=False,
+                             member_text="redact")["message_text"] == text

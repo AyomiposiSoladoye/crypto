@@ -61,8 +61,10 @@ Only your own channel's history is used to train the prediction model.
 
 `TG_CHANNELS` can name a **broadcast channel**, where only admins post and every post has a view count, or a **group**, where members chat.
 - Prediction needs the channel. Members' chat messages have no view counts.
-- When the collector reads a group, it keeps only posts forwarded from channels in full. For member messages it keeps the time, length and reactions but **not the text**.
-- Re-running `backfill` on a group also blanks member text that an earlier version stored.
+- In a group, posts forwarded from channels are kept in full. Member chat text depends on `TG_MEMBER_TEXT`:
+  - `redact` (default) keeps the text, with emails, phone and account numbers, wallet addresses and @usernames replaced by `<EMAIL>`, `<NUMBER>`, `<WALLET>` and `<USER>`. Names typed in plain words are not caught.
+  - `drop` keeps no member text, only time, length and reactions.
+- Re-running `backfill` re-applies the setting to everything already stored.
 
 To find the official channel behind a community group:
 

@@ -53,6 +53,9 @@ def settings() -> dict:
         "session": os.environ.get("TG_SESSION", "secrets/telegram"),
         "channels": [_channel_ref(c) for c in os.environ["TG_CHANNELS"].split(",") if c.strip()],
         "db": os.environ.get("DB_PATH", "data/community.db"),
+        # Member chat text in groups: "redact" (default) keeps it with personal details masked,
+        # "drop" keeps no text.
+        "member_text": os.environ.get("TG_MEMBER_TEXT", "redact").strip().lower(),
     }
 
 
@@ -82,7 +85,7 @@ def snapshot_subscribers(client, conn, channel: str, collected_at: str) -> None:
 def is_broadcast(client, channel) -> bool:
     """True for a broadcast channel; False for a group, where member chat text is not stored."""
     entity = client.get_entity(channel)
-    kind = "channel" if getattr(entity, "broadcast", False) else "group (member chat text not stored)"
+    kind = "channel" if getattr(entity, "broadcast", False) else "group"
     print(f"{channel}: {getattr(entity, 'title', channel)} -> {kind}")
     return bool(getattr(entity, "broadcast", False))
 
@@ -119,7 +122,7 @@ def cmd_backfill(cfg: dict, since: datetime | None) -> None:
             for msg in client.iter_messages(channel, reverse=True, offset_date=since, wait_time=1):
                 if getattr(msg, "action", None) is not None:  # service message (pin, title change...)
                     continue
-                store.upsert_message(conn, message_to_record(msg, channel, keep_text), seen)
+                store.upsert_message(conn, message_to_record(msg, channel, keep_text, cfg["member_text"]), seen)
                 store.insert_measurement(conn, message_to_measurement(msg, channel, collected))
                 n += 1
                 if n % 500 == 0:
@@ -144,7 +147,7 @@ def cmd_snapshot(cfg: dict, days: int) -> None:
             ).fetchone()[0] or 0
             for msg in client.iter_messages(channel, min_id=last, reverse=True):
                 if getattr(msg, "action", None) is None:
-                    store.upsert_message(conn, message_to_record(msg, channel, keep_text), seen)
+                    store.upsert_message(conn, message_to_record(msg, channel, keep_text, cfg["member_text"]), seen)
 
             ids = store.recent_telegram_ids(conn, channel, (collected - timedelta(days=days)).isoformat())
             n = 0
@@ -152,7 +155,7 @@ def cmd_snapshot(cfg: dict, days: int) -> None:
                 for msg in client.get_messages(channel, ids=ids[i:i + BATCH]):
                     if msg is None:  # deleted since we first saw it
                         continue
-                    store.upsert_message(conn, message_to_record(msg, channel, keep_text), seen)
+                    store.upsert_message(conn, message_to_record(msg, channel, keep_text, cfg["member_text"]), seen)
                     store.insert_measurement(conn, message_to_measurement(msg, channel, collected))
                     n += 1
             conn.commit()

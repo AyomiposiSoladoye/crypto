@@ -12,6 +12,23 @@ from datetime import datetime, timezone
 
 URL_RE = re.compile(r"https?://\S+|www\.\S+", re.IGNORECASE)
 
+# Applied to member chat text in groups. Order matters: addresses before long digit runs.
+REDACTIONS = [
+    (re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+"), "<EMAIL>"),
+    (re.compile(r"\b0x[a-fA-F0-9]{40}\b"), "<WALLET>"),                      # EVM
+    (re.compile(r"\bbc1[a-z0-9]{25,62}\b"), "<WALLET>"),                     # BTC bech32
+    (re.compile(r"\b[13][1-9A-HJ-NP-Za-km-z]{25,34}\b"), "<WALLET>"),        # BTC legacy
+    (re.compile(r"\bT[1-9A-HJ-NP-Za-km-z]{33}\b"), "<WALLET>"),              # TRON
+    (re.compile(r"(?<![\w/])@\w{4,}"), "<USER>"),
+    (re.compile(r"(?<![\w./=])\+?\d[\d \-]{8,}\d(?!\w|\.\d)"), "<NUMBER>"),      # phones, account numbers; not decimals or link ids
+]
+
+
+def redact(text: str) -> str:
+    for pattern, token in REDACTIONS:
+        text = pattern.sub(token, text)
+    return text
+
 
 def _text_of(value) -> str | None:
     """Poll questions/answers are plain str in old layers, TextWithEntities in new ones."""
@@ -52,14 +69,18 @@ def forward_source(msg) -> tuple[int | None, int | None]:
     return peer.channel_id, getattr(fwd, "channel_post", None)
 
 
-def message_to_record(msg, channel: str, keep_text: bool = True) -> dict:
+def message_to_record(msg, channel: str, keep_text: bool = True, member_text: str = "drop") -> dict:
     """Static facts about a publication. These don't change after posting (except edits).
 
-    keep_text=False drops the text of member chat messages in groups (counts are kept),
-    so the database holds no member conversations.
+    keep_text=False marks a group. Member chat messages there (anything not forwarded from a
+    channel) get member_text handling: "drop" stores no text, "redact" stores text with
+    contact details, wallet addresses and usernames replaced by placeholders.
     """
     text = getattr(msg, "message", None) or ""
     fwd_channel_id, fwd_channel_post = forward_source(msg)
+    is_member_chat = not keep_text and fwd_channel_id is None
+    if is_member_chat and member_text == "redact":
+        text = redact(text)
     record = {
         "platform": "telegram",
         "channel": channel,
@@ -81,7 +102,7 @@ def message_to_record(msg, channel: str, keep_text: bool = True) -> dict:
         "poll_option_count": None,
         "poll_is_quiz": None,
     }
-    if not keep_text and fwd_channel_id is None:
+    if is_member_chat and member_text != "redact":
         record["message_text"] = None
         return record
     media = getattr(msg, "media", None)
