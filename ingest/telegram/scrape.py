@@ -159,10 +159,13 @@ def cmd_export(cfg: dict, out: str) -> None:
     )
     headers = [d[0] for d in rows.description]
     Path(out).parent.mkdir(parents=True, exist_ok=True)
-    with open(out, "w", newline="", encoding="utf-8-sig") as f:  # BOM so Excel shows emoji correctly
-        w = csv.writer(f)
-        w.writerow(headers)
-        w.writerows(rows)
+    try:
+        with open(out, "w", newline="", encoding="utf-8-sig") as f:  # BOM so Excel shows emoji correctly
+            w = csv.writer(f)
+            w.writerow(headers)
+            w.writerows(rows)
+    except PermissionError:
+        raise SystemExit(f"Can't write {out}: it is probably open in Excel. Close it and run export again.")
     print(f"Wrote {out}")
 
 
