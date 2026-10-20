@@ -56,3 +56,18 @@ Public channel posts and their counters can be read by any member account, and t
 - follow Telegram's API Terms of Service.
 
 Only your own channel's history is used to train the prediction model.
+
+## Groups vs channels
+
+`TG_CHANNELS` can name a **broadcast channel**, where only admins post and every post has a view count, or a **group**, where members chat.
+- Prediction needs the channel. Members' chat messages have no view counts.
+- When the collector reads a group, it keeps only posts forwarded from channels in full. For member messages it keeps the time, length and reactions but **not the text**.
+- Re-running `backfill` on a group also blanks member text that an earlier version stored.
+
+To find the official channel behind a community group:
+
+```bash
+python -m ingest.telegram.scrape sources
+```
+
+Then put that channel's username in `TG_CHANNELS` and run `backfill` again.

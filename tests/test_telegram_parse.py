@@ -85,3 +85,36 @@ def test_store_keeps_repeated_measurements(tmp_path):
             make_msg(views=views), "exchange", PUBLISHED + timedelta(hours=hours)))
     assert conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 1
     assert [r[0] for r in conn.execute("SELECT views FROM measurements ORDER BY age_hours")] == [300, 1200]
+
+
+class PeerChannel(NS):
+    pass
+
+
+class PeerUser(NS):
+    pass
+
+
+def test_group_member_text_dropped_but_channel_forward_kept():
+    member = make_msg(message="my phone is 0801...", fwd_from=None)
+    forwarded = make_msg(message="Scheduled maintenance tonight",
+                         fwd_from=NS(from_id=PeerChannel(channel_id=777), channel_post=55))
+    from_user = make_msg(message="forwarded from a person",
+                         fwd_from=NS(from_id=PeerUser(user_id=1), channel_post=None))
+    assert message_to_record(member, "grp", keep_text=False)["message_text"] is None
+    r = message_to_record(forwarded, "grp", keep_text=False)
+    assert (r["message_text"], r["fwd_channel_id"], r["fwd_channel_post"]) == (
+        "Scheduled maintenance tonight", 777, 55)
+    u = message_to_record(from_user, "grp", keep_text=False)
+    assert u["message_text"] is None and u["fwd_channel_id"] is None
+
+
+def test_old_database_gets_new_columns(tmp_path):
+    import sqlite3
+    path = tmp_path / "old.db"
+    old = sqlite3.connect(path)
+    old.execute("CREATE TABLE messages (message_id TEXT PRIMARY KEY, channel TEXT)")
+    old.commit(); old.close()
+    conn = store.connect(path)
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(messages)")}
+    assert {"fwd_channel_id", "fwd_channel_post"} <= cols

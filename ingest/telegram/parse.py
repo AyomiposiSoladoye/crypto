@@ -43,9 +43,23 @@ def media_type(msg) -> str:
     return "other"
 
 
-def message_to_record(msg, channel: str) -> dict:
-    """Static facts about a publication. These don't change after posting (except edits)."""
+def forward_source(msg) -> tuple[int | None, int | None]:
+    """(channel_id, post_id) when the message was forwarded from a channel; never a user id."""
+    fwd = getattr(msg, "fwd_from", None)
+    peer = getattr(fwd, "from_id", None)
+    if fwd is None or type(peer).__name__ != "PeerChannel":
+        return None, None
+    return peer.channel_id, getattr(fwd, "channel_post", None)
+
+
+def message_to_record(msg, channel: str, keep_text: bool = True) -> dict:
+    """Static facts about a publication. These don't change after posting (except edits).
+
+    keep_text=False drops the text of member chat messages in groups (counts are kept),
+    so the database holds no member conversations.
+    """
     text = getattr(msg, "message", None) or ""
+    fwd_channel_id, fwd_channel_post = forward_source(msg)
     record = {
         "platform": "telegram",
         "channel": channel,
@@ -58,6 +72,8 @@ def message_to_record(msg, channel: str) -> dict:
         "grouped_id": getattr(msg, "grouped_id", None),
         "pinned_flag": bool(getattr(msg, "pinned", False)),
         "is_forward": getattr(msg, "fwd_from", None) is not None,
+        "fwd_channel_id": fwd_channel_id,
+        "fwd_channel_post": fwd_channel_post,
         "character_count": len(text),
         "word_count": len(text.split()),
         "link_count": len(URL_RE.findall(text)),
@@ -65,6 +81,9 @@ def message_to_record(msg, channel: str) -> dict:
         "poll_option_count": None,
         "poll_is_quiz": None,
     }
+    if not keep_text and fwd_channel_id is None:
+        record["message_text"] = None
+        return record
     media = getattr(msg, "media", None)
     if record["media_type"] == "poll":
         poll = media.poll

@@ -3,11 +3,14 @@
     python -m ingest.telegram.scrape login
     python -m ingest.telegram.scrape backfill [--since 2024-01-01]
     python -m ingest.telegram.scrape snapshot [--days 8]
+    python -m ingest.telegram.scrape sources
     python -m ingest.telegram.scrape export [--out data/telegram_messages.csv]
 
 backfill  - every historical message once, with its lifetime counters as of today.
 snapshot  - re-reads messages from the last N days and stores a new measurement row.
             Schedule it hourly so 1h / 6h / 24h / 7d windows can be reconstructed.
+sources   - lists the channels whose posts were forwarded into a group, so you can
+            scrape the official announcement channel directly.
 """
 from __future__ import annotations
 
@@ -17,9 +20,10 @@ import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from telethon.errors import PhoneNumberInvalidError
+from telethon.errors import PhoneNumberInvalidError, RPCError
 from telethon.sync import TelegramClient
 from telethon.tl.functions.channels import GetFullChannelRequest
+from telethon.tl.types import PeerChannel
 
 from . import store
 from .parse import message_to_measurement, message_to_record
@@ -75,6 +79,14 @@ def snapshot_subscribers(client, conn, channel: str, collected_at: str) -> None:
     store.insert_channel_snapshot(conn, channel, collected_at, full.full_chat.participants_count)
 
 
+def is_broadcast(client, channel) -> bool:
+    """True for a broadcast channel; False for a group, where member chat text is not stored."""
+    entity = client.get_entity(channel)
+    kind = "channel" if getattr(entity, "broadcast", False) else "group (member chat text not stored)"
+    print(f"{channel}: {getattr(entity, 'title', channel)} -> {kind}")
+    return bool(getattr(entity, "broadcast", False))
+
+
 def _ask_phone() -> str:
     return input("Phone number in international format, e.g. +2348012345678: ").strip().replace(" ", "")
 
@@ -101,12 +113,13 @@ def cmd_backfill(cfg: dict, since: datetime | None) -> None:
             collected = now_utc()
             seen = collected.isoformat()
             snapshot_subscribers(client, conn, channel, seen)
+            keep_text = is_broadcast(client, channel)
             n = 0
             # reverse=True walks oldest -> newest; offset_date then acts as the start date.
             for msg in client.iter_messages(channel, reverse=True, offset_date=since, wait_time=1):
                 if getattr(msg, "action", None) is not None:  # service message (pin, title change...)
                     continue
-                store.upsert_message(conn, message_to_record(msg, channel), seen)
+                store.upsert_message(conn, message_to_record(msg, channel, keep_text), seen)
                 store.insert_measurement(conn, message_to_measurement(msg, channel, collected))
                 n += 1
                 if n % 500 == 0:
@@ -123,6 +136,7 @@ def cmd_snapshot(cfg: dict, days: int) -> None:
             collected = now_utc()
             seen = collected.isoformat()
             snapshot_subscribers(client, conn, channel, seen)
+            keep_text = is_broadcast(client, channel)
 
             # Pick up anything posted since the last run.
             last = conn.execute(
@@ -130,7 +144,7 @@ def cmd_snapshot(cfg: dict, days: int) -> None:
             ).fetchone()[0] or 0
             for msg in client.iter_messages(channel, min_id=last, reverse=True):
                 if getattr(msg, "action", None) is None:
-                    store.upsert_message(conn, message_to_record(msg, channel), seen)
+                    store.upsert_message(conn, message_to_record(msg, channel, keep_text), seen)
 
             ids = store.recent_telegram_ids(conn, channel, (collected - timedelta(days=days)).isoformat())
             n = 0
@@ -138,11 +152,28 @@ def cmd_snapshot(cfg: dict, days: int) -> None:
                 for msg in client.get_messages(channel, ids=ids[i:i + BATCH]):
                     if msg is None:  # deleted since we first saw it
                         continue
-                    store.upsert_message(conn, message_to_record(msg, channel), seen)
+                    store.upsert_message(conn, message_to_record(msg, channel, keep_text), seen)
                     store.insert_measurement(conn, message_to_measurement(msg, channel, collected))
                     n += 1
             conn.commit()
             print(f"{channel}: measured {n} recent messages")
+
+
+def cmd_sources(cfg: dict) -> None:
+    """Which channels are posts in the configured groups forwarded from?"""
+    conn = store.connect(cfg["db"])
+    rows = store.forward_sources(conn)
+    if not rows:
+        raise SystemExit("No channel forwards found. Run backfill first.")
+    with client_for(cfg) as client:
+        print(f"{'group':<28} {'posts':>5}  source channel")
+        for group, channel_id, n in rows[:15]:
+            try:
+                entity = client.get_entity(PeerChannel(channel_id))
+                name = f"{entity.title}  (@{entity.username})" if entity.username else entity.title
+            except (ValueError, RPCError):
+                name = f"id {channel_id} (not visible to your account; use -100{channel_id} in TG_CHANNELS)"
+            print(f"{str(group):<28} {n:>5}  {name}")
 
 
 def cmd_export(cfg: dict, out: str) -> None:
@@ -177,6 +208,7 @@ def main() -> None:
     b.add_argument("--since", type=lambda s: datetime.fromisoformat(s).replace(tzinfo=timezone.utc))
     s = sub.add_parser("snapshot")
     s.add_argument("--days", type=int, default=8)
+    sub.add_parser("sources")
     e = sub.add_parser("export")
     e.add_argument("--out", default="data/telegram_messages.csv")
     args = parser.parse_args()
@@ -188,6 +220,8 @@ def main() -> None:
         cmd_backfill(cfg, args.since)
     elif args.cmd == "snapshot":
         cmd_snapshot(cfg, args.days)
+    elif args.cmd == "sources":
+        cmd_sources(cfg)
     else:
         cmd_export(cfg, args.out)
 

@@ -17,6 +17,8 @@ CREATE TABLE IF NOT EXISTS messages (
     grouped_id        INTEGER,            -- album: several messages, one post
     pinned_flag       INTEGER,
     is_forward        INTEGER,
+    fwd_channel_id    INTEGER,            -- source channel when forwarded from a channel
+    fwd_channel_post  INTEGER,            -- post id in that channel (dedupes repeat forwards)
     character_count   INTEGER,
     word_count        INTEGER,
     link_count        INTEGER,
@@ -53,7 +55,7 @@ CREATE TABLE IF NOT EXISTS channel_snapshots (
 MESSAGE_COLUMNS = [
     "message_id", "platform", "channel", "telegram_id", "published_at", "edited_at",
     "message_text", "media_type", "grouped_id", "pinned_flag", "is_forward",
-    "character_count", "word_count", "link_count", "poll_question",
+    "fwd_channel_id", "fwd_channel_post", "character_count", "word_count", "link_count", "poll_question",
     "poll_option_count", "poll_is_quiz",
 ]
 MEASUREMENT_COLUMNS = [
@@ -66,7 +68,21 @@ def connect(path: str | Path) -> sqlite3.Connection:
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path)
     conn.executescript(SCHEMA)
+    # Databases created by earlier versions lack newer columns.
+    existing = {r[1] for r in conn.execute("PRAGMA table_info(messages)")}
+    for col in ("fwd_channel_id", "fwd_channel_post"):
+        if col not in existing:
+            conn.execute(f"ALTER TABLE messages ADD COLUMN {col} INTEGER")
     return conn
+
+
+def forward_sources(conn) -> list[tuple[str, int, int]]:
+    """(group, source channel id, number of distinct posts forwarded from it), most first."""
+    return conn.execute(
+        """SELECT channel, fwd_channel_id, COUNT(DISTINCT fwd_channel_post) AS n
+           FROM messages WHERE fwd_channel_id IS NOT NULL
+           GROUP BY channel, fwd_channel_id ORDER BY n DESC"""
+    ).fetchall()
 
 
 def upsert_message(conn: sqlite3.Connection, record: dict, seen_at: str) -> None:
