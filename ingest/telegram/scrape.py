@@ -17,6 +17,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from telethon.errors import PhoneNumberInvalidError
 from telethon.sync import TelegramClient
 from telethon.tl.functions.channels import GetFullChannelRequest
 
@@ -74,10 +75,23 @@ def snapshot_subscribers(client, conn, channel: str, collected_at: str) -> None:
     store.insert_channel_snapshot(conn, channel, collected_at, full.full_chat.participants_count)
 
 
+def _ask_phone() -> str:
+    return input("Phone number in international format, e.g. +2348012345678: ").strip().replace(" ", "")
+
+
 def cmd_login(cfg: dict) -> None:
-    with client_for(cfg) as client:  # prompts for phone, code and 2FA password on first run
+    client = client_for(cfg)
+    try:
+        client.start(phone=_ask_phone)  # then prompts for the code and 2FA password
         me = client.get_me()
         print(f"Logged in as id={me.id}. Session saved to {cfg['session']}.session")
+    except PhoneNumberInvalidError:
+        raise SystemExit(
+            "Telegram rejected that number. Start with + and your country code and drop the "
+            "leading 0, e.g. 08012345678 in Nigeria becomes +2348012345678. Then run login again."
+        )
+    finally:
+        client.disconnect()
 
 
 def cmd_backfill(cfg: dict, since: datetime | None) -> None:
