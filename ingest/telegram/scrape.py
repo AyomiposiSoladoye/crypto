@@ -159,7 +159,7 @@ def cmd_export(cfg: dict, out: str) -> None:
     )
     headers = [d[0] for d in rows.description]
     Path(out).parent.mkdir(parents=True, exist_ok=True)
-    with open(out, "w", newline="", encoding="utf-8") as f:
+    with open(out, "w", newline="", encoding="utf-8-sig") as f:  # BOM so Excel shows emoji correctly
         w = csv.writer(f)
         w.writerow(headers)
         w.writerows(rows)
