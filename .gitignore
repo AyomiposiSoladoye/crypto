@@ -9,3 +9,4 @@ secrets/
 # Scraped data stays local
 data/
 reports/
+models/
