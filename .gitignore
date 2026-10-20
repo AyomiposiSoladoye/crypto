@@ -8,3 +8,4 @@ secrets/
 *.session-journal
 # Scraped data stays local
 data/
+reports/
