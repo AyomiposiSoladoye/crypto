@@ -46,9 +46,17 @@ def settings() -> dict:
         "api_id": int(os.environ["TG_API_ID"]),
         "api_hash": os.environ["TG_API_HASH"],
         "session": os.environ.get("TG_SESSION", "secrets/telegram"),
-        "channels": [c.strip().lstrip("@") for c in os.environ["TG_CHANNELS"].split(",") if c.strip()],
+        "channels": [_channel_ref(c) for c in os.environ["TG_CHANNELS"].split(",") if c.strip()],
         "db": os.environ.get("DB_PATH", "data/community.db"),
     }
+
+
+def _channel_ref(value: str) -> str | int:
+    """Accept 'name', '@name', 't.me/name' or a numeric id like -1001234567890 (private channels)."""
+    value = value.strip().lstrip("@")
+    for prefix in ("https://", "http://", "t.me/"):
+        value = value.removeprefix(prefix)
+    return int(value) if value.lstrip("-").isdigit() else value
 
 
 def client_for(cfg: dict) -> TelegramClient:
